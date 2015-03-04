@@ -23,6 +23,7 @@
 
 #define ENCODER_STEP_RESOLUTION 800
 
+
 Adafruit_NeoPixel ring_pixels = Adafruit_NeoPixel(
   RING_NUM_PIXELS, RING_BUS_PIN, NEO_GRB + NEO_KHZ800
 );
@@ -48,7 +49,6 @@ static byte ccLookup[32] = {
 
 // red - yellow - green - blue - white
 byte buttonState = B00001;
-byte lastButtonState = B00001;
 
 int activeColors = 0;
 uint8_t colorLookup[NUM_BUTTONS];
@@ -62,7 +62,7 @@ long pulses;
 long lastPulses = 0;
 long index = 0;
 long lastIndex = 0;
-bool needsUpdate = false;
+
 
 bool control_changed = false;
 
@@ -130,34 +130,83 @@ void controlChange(byte channel, byte number, byte value) {
   updateRing();
 }
 
+
+
+
+#define BUTTON_SAMPLE_WINDOW 20 // ms
+#define BUTTON_RELEASE_TIMEOUT 100 // ms
+#define BUTTON_TRIGGER_TRESHOLD 0.8
+
+
+static unsigned int redState = 0;
+static unsigned int blueState = 0;
+static unsigned int greenState = 0;
+static unsigned int yellowState = 0;
+static unsigned int whiteState = 0;
+
+static long lastSampleWindow = 0;
+static long lastRelease = 0;
+static int numButtonSamples = 0;
+static unsigned int buttonSamples[NUM_BUTTONS] = {0};
+static byte lastButtonState = buttonState;
+static byte lastNumActive = 0;
+
 void readButtons() {
-  // if (millis() - releaseTime > 100) {
-  //   //Serial.println("blocked");
-  //   return;
-  // }
 
-  byte newState = B00000;
-  bool releasing = false;
+  long now = millis();
+  numButtonSamples++;
 
-  if (!digitalRead(BUTTON_RED_PIN))    newState |= 1 << 0;
-  if (!digitalRead(BUTTON_YELLOW_PIN)) newState |= 1 << 1;
-  if (!digitalRead(BUTTON_GREEN_PIN))  newState |= 1 << 2;
-  if (!digitalRead(BUTTON_BLUE_PIN))   newState |= 1 << 3;
-  if (!digitalRead(BUTTON_WHITE_PIN))  newState |= 1 << 4;
+  // red - yellow - green - blue - white
+  if (!digitalRead(BUTTON_RED_PIN))    buttonSamples[0]++;
+  if (!digitalRead(BUTTON_YELLOW_PIN)) buttonSamples[1]++;
+  if (!digitalRead(BUTTON_GREEN_PIN))  buttonSamples[2]++;
+  if (!digitalRead(BUTTON_BLUE_PIN))   buttonSamples[3]++;
+  if (!digitalRead(BUTTON_WHITE_PIN))  buttonSamples[4]++;
 
-  // for (int buttonIdx = 0; buttonIdx < NUM_BUTTONS; buttonIdx++) {
-  //   if ((buttonState & (1 << buttonIdx)) == 1 && (newState & (1 << buttonIdx)) == 0) {
-  //     releaseTime = millis();
-  //     buttonState = lastButtonState;
-  //     needsUpdate = true;
-  //   }
-  // }
+  if ((lastSampleWindow + BUTTON_SAMPLE_WINDOW) < now) {
+    // new sample window
+    byte newState = B00000;
+    byte numActive = 0;
+    for (int buttonIdx = 0; buttonIdx < NUM_BUTTONS; buttonIdx++) {
+      if (((float)buttonSamples[buttonIdx] / (float)numButtonSamples) > BUTTON_TRIGGER_TRESHOLD) {
+        newState |= 1 << buttonIdx;
+        numActive++;
+      }
+      buttonSamples[buttonIdx] = 0;
+    }
 
-  if (newState != B00000 && buttonState != newState) {
-    buttonState = newState;
-    needsUpdate = true;
+    numButtonSamples = 0;
+    lastSampleWindow = now;
+
+    if (lastRelease + BUTTON_RELEASE_TIMEOUT < now) {
+      if (lastNumActive > numActive && lastNumActive != 0) {
+        lastRelease = now;
+        buttonState = lastButtonState;
+        updateButtons();
+      } else if (newState != B00000 && buttonState != newState) {
+        buttonState = newState;
+        updateButtons();
+      }
+    }
+
+    lastButtonState = newState;
+    lastNumActive = numActive;
   }
+}
 
+void sendControlChange() {
+  byte cc = ccLookup[buttonState];
+  float val = controlState[buttonState];
+  byte lastVal = ccState[buttonState];
+  byte newVal = (byte)(val * 127);
+
+  if (lastVal != newVal) {
+    MIDI.sendControlChange(cc, newVal, 1);
+    ccState[buttonState] = newVal;
+  }
+}
+
+void updateButtons() {
   activeColors = 0;
   uint8_t colorIdx, r, g, b;
   float lum;
@@ -181,24 +230,6 @@ void readButtons() {
   }
 
   button_pixels.show();
-  lastButtonState = newState;
-
-  // set button led colors
-
-
-
-}
-
-void sendControlChange() {
-  byte cc = ccLookup[buttonState];
-  float val = controlState[buttonState];
-  byte lastVal = ccState[buttonState];
-  byte newVal = (byte)(val * 127);
-
-  if (lastVal != newVal) {
-    MIDI.sendControlChange(cc, newVal, 1);
-    ccState[buttonState] = newVal;
-  }
 }
 
 void updateRing() {
