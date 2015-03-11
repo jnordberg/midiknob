@@ -23,6 +23,7 @@
 
 #define ENCODER_STEP_RESOLUTION 800
 
+#define MIDI_CHANNEL 7
 
 Adafruit_NeoPixel ring_pixels = Adafruit_NeoPixel(
   RING_NUM_PIXELS, RING_BUS_PIN, NEO_GRB + NEO_KHZ800
@@ -201,7 +202,7 @@ void sendControlChange() {
   byte newVal = (byte)(val * 127);
 
   if (lastVal != newVal) {
-    MIDI.sendControlChange(cc, newVal, 1);
+    MIDI.sendControlChange(cc, newVal, MIDI_CHANNEL );
     ccState[buttonState] = newVal;
   }
 }
